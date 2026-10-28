@@ -8,6 +8,10 @@ on:
 jobs:
   check-access:
     runs-on: ubuntu-latest
+    # Add these permissions so GitHub can generate the OIDC token for AWS
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
       - name: Checkout code
