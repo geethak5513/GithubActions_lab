@@ -4,29 +4,48 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   check-access:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Debug OIDC Token Claim
+      - name: Show OIDC claims for troubleshooting
+        shell: python
         run: |
-          echo "==== DEBUGGING OIDC ISSUER AND SUBJECT ===="
-          # Fetch the token from GitHub's local environment runner
-          ACTIONS_TOKEN=$(curl -s "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=://amazonaws.com" -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN")
-          
-          # Safely decode the middle section (payload) of the JWT token
-          JWT_PAYLOAD=$(echo "$ACTIONS_TOKEN" | jq -r '.value' | cut -d'.' -f2)
-          
-          # Print the exact repository and organization details AWS sees
-          echo "$JWT_PAYLOAD" | base64 --decode 2>/dev/null | jq '{iss: .iss, sub: .sub, aud: .aud, repository: .repository, repository_owner: .repository_owner}'
+          import base64
+          import json
+          import os
+          import urllib.request
+
+          url = (
+              os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]
+              + "&audience=sts.amazonaws.com"
+          )
+          request = urllib.request.Request(
+              url,
+              headers={
+                  "Authorization": (
+                      "Bearer "
+                      + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]
+                  )
+              },
+          )
+
+          with urllib.request.urlopen(request) as response:
+              token = json.load(response)["value"]
+
+          payload = token.split(".")[1]
+          payload += "=" * (-len(payload) % 4)
+          claims = json.loads(base64.urlsafe_b64decode(payload))
+
+          for key in ("iss", "aud", "sub", "repository", "ref"):
+              print(f"{key}: {claims.get(key)}")
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -34,3 +53,7 @@ jobs:
           role-to-assume: arn:aws:iam::649445653391:role/Githubactions_lab
           role-session-name: githubactionslab
           aws-region: us-east-1
+          audience: sts.amazonaws.com
+
+      - name: Verify AWS access
+        run: aws sts get-caller-identity
